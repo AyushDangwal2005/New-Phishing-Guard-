@@ -1,5 +1,10 @@
 import { generateText, Output } from "ai"
 import { z } from "zod"
+import {
+  scanUrlWithVirusTotal,
+  checkGoogleSafeBrowsing,
+  classifyTextWithHuggingFace,
+} from "@/lib/api-services"
 
 export const maxDuration = 60
 
@@ -12,126 +17,197 @@ const analysisResultSchema = z.object({
   highlighted_words: z.array(z.string()),
 })
 
-// Phishing detection patterns for fallback
-const PHISHING_KEYWORDS = [
-  "urgent", "immediately", "verify", "suspended", "locked", "confirm",
-  "password", "credentials", "otp", "pin", "bank", "account",
-  "winner", "lottery", "prize", "free", "limited time", "act now",
-  "click here", "update payment", "unusual activity", "security alert",
-  "dear customer", "dear user", "your account", "expires today",
-  "verification required", "action required", "confirm identity",
-]
+// Comprehensive phishing detection patterns
+const SUSPICIOUS_PATTERNS = {
+  urgency: [
+    "urgent", "immediately", "act now", "limited time", "expires", "deadline",
+    "hurry", "quick", "fast", "asap", "right away", "don't delay", "last chance",
+    "final notice", "time sensitive", "within 24 hours", "within 48 hours"
+  ],
+  financial: [
+    "bank", "account", "credit card", "payment", "transfer", "wire", "bitcoin",
+    "crypto", "investment", "lottery", "prize", "winner", "inheritance", "million",
+    "free money", "tax refund", "loan approved", "debt relief"
+  ],
+  credentials: [
+    "password", "login", "verify", "confirm", "update your", "account suspended",
+    "unusual activity", "security alert", "otp", "verification code", "pin",
+    "ssn", "social security", "identity", "authenticate"
+  ],
+  threats: [
+    "suspended", "blocked", "terminated", "legal action", "arrest", "police",
+    "lawsuit", "court", "warrant", "fine", "penalty", "consequence", "lose access"
+  ],
+  impersonation: [
+    "irs", "fbi", "government", "microsoft", "apple", "amazon", "paypal", "netflix",
+    "google", "facebook", "whatsapp", "customer service", "tech support", "official"
+  ],
+  phishing_links: [
+    "click here", "click this link", "click below", "visit this link",
+    "open attachment", "download", "sign in", "log in", "access your account"
+  ],
+}
 
 const SUSPICIOUS_URL_PATTERNS = [
-  /\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/, // IP addresses
-  /bit\.ly|tinyurl|t\.co|goo\.gl/i, // URL shorteners
-  /@.*\./,  // @ symbol in URL
-  /\.xyz|\.top|\.tk|\.ml|\.ga|\.cf/i, // Suspicious TLDs
-  /login|signin|verify|secure|account|update/i, // Phishing keywords in URL
-  /[a-z0-9]{30,}/i, // Very long random strings
+  /\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/,
+  /bit\.ly|tinyurl|t\.co|goo\.gl|ow\.ly|is\.gd/i,
+  /@.*\./,
+  /\.xyz|\.top|\.tk|\.ml|\.ga|\.cf|\.gq|\.work|\.click/i,
+  /login|signin|verify|secure|account|update/i,
+  /[a-z0-9]{30,}/i,
 ]
 
-function analyzeWithRules(text: string, url: string): z.infer<typeof analysisResultSchema> {
-  const lowerText = (text + " " + url).toLowerCase()
-  const foundKeywords: string[] = []
+function analyzeTextPatterns(text: string): {
+  score: number
+  reasons: string[]
+  highlightedWords: string[]
+  threatTypes: string[]
+} {
+  const lowerText = text.toLowerCase()
+  let score = 0
   const reasons: string[] = []
-  const actions: string[] = []
-  let riskScore = 0
+  const highlightedWords: string[] = []
+  const threatTypes: string[] = []
 
-  // Check for phishing keywords
-  for (const keyword of PHISHING_KEYWORDS) {
-    if (lowerText.includes(keyword.toLowerCase())) {
-      foundKeywords.push(keyword)
-      riskScore += 8
-    }
-  }
-
-  if (foundKeywords.length > 0) {
-    reasons.push(`Contains ${foundKeywords.length} suspicious keywords: ${foundKeywords.slice(0, 5).join(", ")}${foundKeywords.length > 5 ? "..." : ""}`)
-  }
-
-  // Check URL patterns
-  if (url) {
-    for (const pattern of SUSPICIOUS_URL_PATTERNS) {
-      if (pattern.test(url)) {
-        riskScore += 15
-        reasons.push("URL contains suspicious patterns")
-        break
+  for (const [category, patterns] of Object.entries(SUSPICIOUS_PATTERNS)) {
+    const matches = patterns.filter(p => lowerText.includes(p))
+    if (matches.length > 0) {
+      highlightedWords.push(...matches)
+      
+      switch (category) {
+        case "urgency":
+          score += matches.length * 8
+          reasons.push(`Urgency tactics detected: "${matches.slice(0, 3).join('", "')}"`)
+          threatTypes.push("Social Engineering")
+          break
+        case "financial":
+          score += matches.length * 10
+          reasons.push(`Financial/monetary references found: "${matches.slice(0, 3).join('", "')}"`)
+          threatTypes.push("Financial Fraud")
+          break
+        case "credentials":
+          score += matches.length * 12
+          reasons.push(`Credential harvesting indicators: "${matches.slice(0, 3).join('", "')}"`)
+          threatTypes.push("Credential Phishing")
+          break
+        case "threats":
+          score += matches.length * 10
+          reasons.push(`Threatening language detected: "${matches.slice(0, 3).join('", "')}"`)
+          threatTypes.push("Intimidation Scam")
+          break
+        case "impersonation":
+          score += matches.length * 12
+          reasons.push(`Possible impersonation of: "${matches.slice(0, 3).join('", "')}"`)
+          threatTypes.push("Brand Impersonation")
+          break
+        case "phishing_links":
+          score += matches.length * 8
+          reasons.push(`Suspicious call-to-action: "${matches.slice(0, 3).join('", "')}"`)
+          threatTypes.push("Phishing")
+          break
       }
     }
-
-    if (url.includes("http://") && !url.includes("localhost")) {
-      riskScore += 10
-      reasons.push("Uses insecure HTTP connection")
-    }
-
-    // Check for mismatched domains (common phishing tactic)
-    const domainMatch = url.match(/https?:\/\/([^\/]+)/)
-    if (domainMatch) {
-      const domain = domainMatch[1].toLowerCase()
-      if (domain.includes("-") && (domain.includes("paypal") || domain.includes("amazon") || domain.includes("apple") || domain.includes("microsoft") || domain.includes("google"))) {
-        riskScore += 25
-        reasons.push("Domain mimics a well-known brand")
-      }
-    }
   }
 
-  // Check for urgency indicators
-  const urgencyPhrases = ["immediately", "urgent", "within 24 hours", "expires today", "act now", "don't wait"]
-  const hasUrgency = urgencyPhrases.some(phrase => lowerText.includes(phrase))
-  if (hasUrgency) {
-    riskScore += 15
-    reasons.push("Creates artificial sense of urgency")
-  }
-
-  // Check for requests for sensitive information
-  const sensitiveRequests = ["password", "credit card", "ssn", "social security", "bank account", "pin number"]
-  const requestsSensitive = sensitiveRequests.some(req => lowerText.includes(req))
-  if (requestsSensitive) {
-    riskScore += 20
-    reasons.push("Requests sensitive personal information")
-  }
-
-  // Check for generic greetings
+  // Generic greetings
   if (/dear (customer|user|member|sir|madam)/i.test(lowerText)) {
-    riskScore += 10
+    score += 10
     reasons.push("Uses generic greeting instead of your name")
   }
 
-  // Cap risk score
-  riskScore = Math.min(riskScore, 100)
+  // Excessive punctuation
+  const exclamationCount = (text.match(/!/g) || []).length
+  if (exclamationCount > 3) {
+    score += exclamationCount * 2
+    reasons.push("Excessive punctuation for emphasis")
+  }
 
-  // Determine risk level
-  let riskLevel: "safe" | "suspicious" | "dangerous"
-  if (riskScore <= 25) {
-    riskLevel = "safe"
-    if (reasons.length === 0) {
-      reasons.push("No suspicious patterns detected")
-    }
-    actions.push("Content appears safe to interact with")
-    actions.push("Always verify sender identity for important requests")
-  } else if (riskScore <= 60) {
-    riskLevel = "suspicious"
-    actions.push("Verify the sender through official channels")
-    actions.push("Do not click any links until verified")
-    actions.push("Check the sender's email address carefully")
-    actions.push("Contact the organization directly using known contact info")
-  } else {
-    riskLevel = "dangerous"
-    actions.push("Do NOT click any links in this message")
-    actions.push("Do NOT reply or provide any information")
-    actions.push("Report this message as phishing")
-    actions.push("Delete the message immediately")
-    actions.push("If you shared any info, change passwords immediately")
+  // ALL CAPS
+  const capsWords = text.match(/\b[A-Z]{4,}\b/g) || []
+  if (capsWords.length > 2) {
+    score += capsWords.length * 3
+    reasons.push("Excessive use of capital letters")
+    highlightedWords.push(...capsWords.slice(0, 5))
   }
 
   return {
-    risk_level: riskLevel,
-    risk_score: riskScore,
-    confidence_score: Math.min(70 + reasons.length * 5, 95),
+    score: Math.min(score, 100),
     reasons,
-    actions,
-    highlighted_words: foundKeywords.slice(0, 10),
+    highlightedWords: [...new Set(highlightedWords)],
+    threatTypes: [...new Set(threatTypes)]
+  }
+}
+
+function analyzeUrlPatterns(url: string): {
+  score: number
+  reasons: string[]
+  threatTypes: string[]
+} {
+  let score = 0
+  const reasons: string[] = []
+  const threatTypes: string[] = []
+
+  try {
+    const urlObj = new URL(url)
+    
+    // IP address check
+    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(urlObj.hostname)) {
+      score += 30
+      reasons.push("URL uses IP address instead of domain name")
+      threatTypes.push("Suspicious Infrastructure")
+    }
+
+    // Suspicious TLDs
+    const suspiciousTlds = [".tk", ".ml", ".ga", ".cf", ".gq", ".xyz", ".top", ".work", ".click", ".link"]
+    if (suspiciousTlds.some(tld => urlObj.hostname.endsWith(tld))) {
+      score += 25
+      reasons.push("Domain uses high-risk TLD commonly associated with malicious sites")
+      threatTypes.push("Suspicious Domain")
+    }
+
+    // URL shorteners
+    const shorteners = ["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd"]
+    if (shorteners.some(s => urlObj.hostname.includes(s))) {
+      score += 15
+      reasons.push("URL shortener detected - destination is hidden")
+      threatTypes.push("Obfuscated Link")
+    }
+
+    // Brand names in suspicious positions
+    const brands = ["paypal", "amazon", "apple", "microsoft", "google", "netflix", "facebook", "bank"]
+    const brandMatches = brands.filter(b => 
+      urlObj.hostname.includes(b) && 
+      !urlObj.hostname.match(new RegExp(`^(www\\.)?${b}\\.(com|org|net)$`))
+    )
+    if (brandMatches.length > 0) {
+      score += 35
+      reasons.push(`Possible brand impersonation: "${brandMatches.join('", "')}" in non-official domain`)
+      threatTypes.push("Brand Spoofing")
+    }
+
+    // Excessive hyphens
+    if ((urlObj.hostname.match(/-/g) || []).length > 2) {
+      score += 10
+      reasons.push("Domain contains excessive hyphens")
+    }
+
+    // No HTTPS
+    if (urlObj.protocol !== "https:") {
+      score += 10
+      reasons.push("URL does not use HTTPS encryption")
+      threatTypes.push("Insecure Connection")
+    }
+
+  } catch {
+    score += 20
+    reasons.push("URL appears malformed or invalid")
+    threatTypes.push("Invalid URL")
+  }
+
+  return {
+    score: Math.min(score, 100),
+    reasons,
+    threatTypes: [...new Set(threatTypes)]
   }
 }
 
@@ -143,13 +219,15 @@ export async function POST(req: Request) {
     const file = formData.get("file") as File | null
 
     let contentToAnalyze = text
-    let extractedFileText = ""
+    let fileInfo: { type: string; name: string; size: number } | null = null
 
-    // Handle file if present
+    // Handle file
     if (file) {
+      fileInfo = { type: file.type, name: file.name, size: file.size }
+      
       if (file.type.startsWith("text/") || file.type === "application/pdf") {
-        extractedFileText = await file.text()
-        contentToAnalyze += "\n\n[File Content]:\n" + extractedFileText
+        const fileText = await file.text()
+        contentToAnalyze += "\n\n[File Content]:\n" + fileText
       }
     }
 
@@ -158,58 +236,155 @@ export async function POST(req: Request) {
     }
 
     if (!contentToAnalyze.trim()) {
-      return Response.json(
-        { error: "No content provided for analysis" },
-        { status: 400 }
-      )
+      return Response.json({ error: "No content provided for analysis" }, { status: 400 })
     }
 
+    // Run external API checks in parallel
+    const [virusTotalResult, safeBrowsingResult, huggingfaceResult] = await Promise.all([
+      url ? scanUrlWithVirusTotal(url) : Promise.resolve(null),
+      url ? checkGoogleSafeBrowsing(url) : Promise.resolve(null),
+      contentToAnalyze.length > 20 ? classifyTextWithHuggingFace(contentToAnalyze.slice(0, 500)) : Promise.resolve(null),
+    ])
+
+    // Rule-based analysis
+    const textAnalysis = analyzeTextPatterns(contentToAnalyze)
+    const urlAnalysis = url ? analyzeUrlPatterns(url) : { score: 0, reasons: [], threatTypes: [] }
+
+    // External API scoring
+    let externalScore = 0
+    const externalReasons: string[] = []
+    const externalThreatTypes: string[] = []
+
+    if (virusTotalResult && virusTotalResult.positives > 0) {
+      externalScore += Math.min(virusTotalResult.positives * 10, 50)
+      externalReasons.push(`VirusTotal: ${virusTotalResult.positives}/${virusTotalResult.total} security vendors flagged this URL`)
+      externalThreatTypes.push("Malicious URL")
+    }
+
+    if (safeBrowsingResult && !safeBrowsingResult.isSafe) {
+      externalScore += 40
+      externalReasons.push(`Google Safe Browsing: Flagged as ${safeBrowsingResult.threats.map(t => t.threatType).join(", ")}`)
+      safeBrowsingResult.threats.forEach(t => externalThreatTypes.push(t.threatType))
+    }
+
+    if (huggingfaceResult) {
+      const harmfulLabels = ["phishing", "scam", "spam", "suspicious"]
+      if (harmfulLabels.includes(huggingfaceResult.label) && huggingfaceResult.score > 0.6) {
+        externalScore += Math.round(huggingfaceResult.score * 30)
+        externalReasons.push(`ML Classification: ${huggingfaceResult.label} (${Math.round(huggingfaceResult.score * 100)}% confidence)`)
+        externalThreatTypes.push(huggingfaceResult.label.charAt(0).toUpperCase() + huggingfaceResult.label.slice(1))
+      }
+    }
+
+    // Combined scoring
+    const ruleScore = textAnalysis.score * 0.5 + urlAnalysis.score * 0.5
+    const combinedScore = Math.min(
+      Math.round(ruleScore * 0.6 + externalScore * 0.4),
+      100
+    )
+
+    // Build reasons and threat types
+    const allReasons = [...textAnalysis.reasons, ...urlAnalysis.reasons, ...externalReasons]
+    const allThreatTypes = [...new Set([...textAnalysis.threatTypes, ...urlAnalysis.threatTypes, ...externalThreatTypes])]
+
+    // Try AI-powered enhanced analysis
+    let aiResult = null
     try {
-      // Try AI-powered analysis first
       const { output } = await generateText({
         model: "openai/gpt-4o-mini",
-        output: Output.object({
-          schema: analysisResultSchema,
-        }),
+        output: Output.object({ schema: analysisResultSchema }),
         messages: [
           {
             role: "system",
-            content: `You are an expert cybersecurity analyst specializing in phishing, scam, and fraud detection. Analyze the provided content for:
-
+            content: `You are an expert cybersecurity analyst specializing in phishing, scam, and fraud detection. Analyze content for:
 1. Phishing indicators (fake login pages, credential harvesting)
-2. Scam patterns (lottery scams, advance fee fraud, romance scams)
-3. Social engineering tactics (urgency, fear, authority impersonation)
-4. Suspicious URLs (typosquatting, URL shorteners, suspicious domains)
+2. Scam patterns (lottery, advance fee fraud, romance scams)
+3. Social engineering tactics (urgency, fear, authority)
+4. Suspicious URLs (typosquatting, shorteners, suspicious domains)
 5. Malicious content indicators
 
-Provide a detailed analysis with specific reasons for your risk assessment. Be accurate and thorough.`
+Current rule-based findings:
+- Risk score: ${combinedScore}/100
+- Detected issues: ${allReasons.join("; ") || "None"}
+- External scan results: ${externalReasons.join("; ") || "None"}
+
+Enhance the analysis with additional insights.`
           },
-          {
-            role: "user",
-            content: `Analyze this content for phishing, scams, and fraud:\n\n${contentToAnalyze}`
-          }
+          { role: "user", content: `Analyze:\n\n${contentToAnalyze.slice(0, 2000)}` }
         ],
       })
-
-      return Response.json({
-        ...output,
-        original_text: text,
-      })
+      aiResult = output
     } catch {
-      // Fallback to rule-based analysis
-      console.log("AI unavailable, using rule-based analysis")
-      const fallbackResult = analyzeWithRules(contentToAnalyze, url)
-      
-      return Response.json({
-        ...fallbackResult,
-        original_text: text,
+      // AI unavailable - continue with rule-based
+    }
+
+    // Merge AI insights
+    if (aiResult) {
+      aiResult.reasons.forEach(r => {
+        if (!allReasons.some(existing => existing.toLowerCase().includes(r.toLowerCase().slice(0, 20)))) {
+          allReasons.push(r)
+        }
       })
     }
+
+    // Determine final risk level
+    const finalScore = aiResult ? Math.round((combinedScore + aiResult.risk_score) / 2) : combinedScore
+    let riskLevel: "safe" | "suspicious" | "dangerous"
+    
+    if (finalScore >= 60) {
+      riskLevel = "dangerous"
+    } else if (finalScore >= 30) {
+      riskLevel = "suspicious"
+    } else {
+      riskLevel = "safe"
+    }
+
+    // Generate actions
+    const actions: string[] = []
+    if (riskLevel === "dangerous") {
+      actions.push("Do NOT click any links in this message")
+      actions.push("Do NOT provide any personal information")
+      actions.push("Report this message as phishing/spam")
+      actions.push("Block the sender immediately")
+      if (url) actions.push("Do NOT visit the linked website")
+    } else if (riskLevel === "suspicious") {
+      actions.push("Verify the sender through official channels")
+      actions.push("Do not click links - navigate directly to official websites")
+      actions.push("Be cautious with any requests for information")
+    } else {
+      if (allReasons.length === 0) allReasons.push("No suspicious patterns detected")
+      actions.push("Content appears legitimate")
+      actions.push("Always verify sender identity for sensitive requests")
+    }
+
+    return Response.json({
+      risk_level: riskLevel,
+      risk_score: finalScore,
+      confidence_score: Math.min(75 + allReasons.length * 3, 98),
+      reasons: allReasons,
+      actions,
+      highlighted_words: textAnalysis.highlightedWords.slice(0, 15),
+      threat_types: allThreatTypes.length > 0 ? allThreatTypes : null,
+      original_text: text,
+      file_info: fileInfo,
+      external_scans: {
+        virustotal: virusTotalResult ? {
+          positives: virusTotalResult.positives,
+          total: virusTotalResult.total,
+          permalink: virusTotalResult.permalink,
+        } : null,
+        google_safe_browsing: safeBrowsingResult ? {
+          is_safe: safeBrowsingResult.isSafe,
+          threats: safeBrowsingResult.threats.map(t => t.threatType),
+        } : null,
+        huggingface: huggingfaceResult ? {
+          label: huggingfaceResult.label,
+          confidence: Math.round(huggingfaceResult.score * 100),
+        } : null,
+      },
+    })
   } catch (error) {
     console.error("Analysis error:", error)
-    return Response.json(
-      { error: "Failed to analyze content" },
-      { status: 500 }
-    )
+    return Response.json({ error: "Failed to analyze content" }, { status: 500 })
   }
 }

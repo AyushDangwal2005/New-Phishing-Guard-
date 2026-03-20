@@ -1,5 +1,12 @@
 import { generateText, Output } from "ai"
 import { z } from "zod"
+import {
+  scanUrlWithVirusTotal,
+  checkGoogleSafeBrowsing,
+  checkAbuseIPDB,
+  getIPInfo,
+  resolveDomainToIP,
+} from "@/lib/api-services"
 
 export const maxDuration = 30
 
@@ -20,10 +27,11 @@ const TRUSTED_DOMAINS = [
   "google.com", "microsoft.com", "apple.com", "amazon.com", "facebook.com",
   "twitter.com", "linkedin.com", "github.com", "paypal.com", "netflix.com",
   "youtube.com", "instagram.com", "whatsapp.com", "zoom.us", "dropbox.com",
+  "vercel.com", "cloudflare.com", "stripe.com", "slack.com", "notion.so",
 ]
 
 // Suspicious TLDs
-const SUSPICIOUS_TLDS = [".xyz", ".top", ".tk", ".ml", ".ga", ".cf", ".work", ".click", ".link", ".info"]
+const SUSPICIOUS_TLDS = [".xyz", ".top", ".tk", ".ml", ".ga", ".cf", ".work", ".click", ".link", ".info", ".gq", ".buzz"]
 
 function extractDomain(url: string): string {
   try {
@@ -56,7 +64,7 @@ function analyzeDomainWithRules(url: string): z.infer<typeof trackResultSchema> 
   }
 
   // Check for brand impersonation patterns
-  const brandPatterns = ["paypa1", "paypai", "amaz0n", "g00gle", "micros0ft", "app1e", "faceb00k"]
+  const brandPatterns = ["paypa1", "paypai", "amaz0n", "g00gle", "micros0ft", "app1e", "faceb00k", "netfl1x"]
   if (brandPatterns.some(p => domain.includes(p))) {
     riskLevel = "High"
     reputation = "Dangerous - Possible brand impersonation"
@@ -83,14 +91,13 @@ function analyzeDomainWithRules(url: string): z.infer<typeof trackResultSchema> 
     details.push("Unusually long domain name")
   }
 
-  // Check if domain looks like an IP address
+  // Check if domain is an IP address
   if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(domain)) {
     riskLevel = "High"
     reputation = "Suspicious - IP address used instead of domain"
     details.push("URL uses IP address instead of domain name")
   }
 
-  // Generate estimated data
   const isHttps = url.startsWith("https://") || !url.startsWith("http://")
   
   if (details.length === 0) {
@@ -117,52 +124,160 @@ export async function GET(req: Request) {
     const url = searchParams.get("url")
 
     if (!url) {
-      return Response.json(
-        { error: "URL parameter is required" },
-        { status: 400 }
-      )
+      return Response.json({ error: "URL parameter is required" }, { status: 400 })
     }
 
     const domain = extractDomain(url)
+    
+    // Resolve domain to IP
+    const resolvedIP = await resolveDomainToIP(domain)
 
+    // Run external API checks in parallel
+    const [virusTotalResult, safeBrowsingResult, abuseIPDBResult, ipInfoResult] = await Promise.all([
+      scanUrlWithVirusTotal(url),
+      checkGoogleSafeBrowsing(url),
+      resolvedIP ? checkAbuseIPDB(resolvedIP) : Promise.resolve(null),
+      resolvedIP ? getIPInfo(resolvedIP) : Promise.resolve(null),
+    ])
+
+    // Start with rule-based analysis
+    const ruleAnalysis = analyzeDomainWithRules(url)
+    const details = [...ruleAnalysis.details]
+    let riskLevel = ruleAnalysis.risk
+    let reputation = ruleAnalysis.reputation
+
+    // Enhance with VirusTotal results
+    if (virusTotalResult) {
+      if (virusTotalResult.positives > 0) {
+        details.push(`VirusTotal: ${virusTotalResult.positives}/${virusTotalResult.total} vendors flagged as malicious`)
+        if (virusTotalResult.positives >= 5) riskLevel = "High"
+        else if (virusTotalResult.positives >= 2) riskLevel = riskLevel === "Low" ? "Medium" : riskLevel
+        reputation = `VirusTotal: ${virusTotalResult.positives} detections`
+      } else {
+        details.push("VirusTotal: No malicious detections")
+      }
+    }
+
+    // Enhance with Google Safe Browsing
+    if (safeBrowsingResult) {
+      if (!safeBrowsingResult.isSafe) {
+        details.push(`Google Safe Browsing: Flagged as ${safeBrowsingResult.threats.map(t => t.threatType).join(", ")}`)
+        riskLevel = "High"
+        reputation = "Google Safe Browsing: UNSAFE"
+      } else {
+        details.push("Google Safe Browsing: No threats detected")
+      }
+    }
+
+    // Enhance with AbuseIPDB results
+    if (abuseIPDBResult) {
+      if (abuseIPDBResult.abuseConfidenceScore > 50) {
+        details.push(`AbuseIPDB: ${abuseIPDBResult.abuseConfidenceScore}% abuse confidence, ${abuseIPDBResult.totalReports} reports`)
+        riskLevel = "High"
+      } else if (abuseIPDBResult.abuseConfidenceScore > 20) {
+        details.push(`AbuseIPDB: ${abuseIPDBResult.abuseConfidenceScore}% abuse confidence`)
+        if (riskLevel === "Low") riskLevel = "Medium"
+      } else if (abuseIPDBResult.totalReports === 0) {
+        details.push("AbuseIPDB: No abuse reports found")
+      }
+    }
+
+    // Build location string from IPInfo
+    let location = ruleAnalysis.location
+    if (ipInfoResult) {
+      location = `${ipInfoResult.city}, ${ipInfoResult.region}, ${ipInfoResult.country}`
+      if (ipInfoResult.org) {
+        details.push(`ISP/Org: ${ipInfoResult.org}`)
+      }
+    }
+
+    // Try AI-enhanced analysis
     try {
-      // Try AI-powered analysis
       const { output } = await generateText({
         model: "openai/gpt-4o-mini",
-        output: Output.object({
-          schema: trackResultSchema,
-        }),
+        output: Output.object({ schema: trackResultSchema }),
         messages: [
           {
             role: "system",
-            content: `You are a domain intelligence expert. Analyze the provided domain for security risks. Consider:
-- Domain age indicators (newer domains are higher risk)
-- TLD reputation
-- Brand impersonation attempts
-- URL structure anomalies
-- Known malicious patterns
+            content: `You are a domain intelligence expert. Enhance the analysis with additional insights.
 
-Provide realistic estimates where exact data isn't available. Be thorough in your analysis.`
+Current findings:
+- Domain: ${domain}
+- IP: ${resolvedIP || "Unknown"}
+- Location: ${location || "Unknown"}
+- Current risk level: ${riskLevel}
+- Details: ${details.join("; ")}
+
+Provide realistic domain age estimate and enhanced reputation assessment. Add any additional security observations.`
           },
-          {
-            role: "user",
-            content: `Analyze this domain for security threats: ${domain}\nFull URL: ${url}`
-          }
+          { role: "user", content: `Analyze security profile for: ${domain}` }
         ],
       })
 
-      return Response.json(output)
+      // Merge AI insights
+      return Response.json({
+        domain,
+        age: output.age,
+        ip: resolvedIP || output.ip,
+        location: location || output.location,
+        ssl: ruleAnalysis.ssl,
+        reputation: output.reputation || reputation,
+        risk: riskLevel,
+        registrar: output.registrar,
+        details: [...new Set([...details, ...output.details])],
+        external_scans: {
+          virustotal: virusTotalResult ? {
+            positives: virusTotalResult.positives,
+            total: virusTotalResult.total,
+            permalink: virusTotalResult.permalink,
+          } : null,
+          google_safe_browsing: safeBrowsingResult ? {
+            is_safe: safeBrowsingResult.isSafe,
+            threats: safeBrowsingResult.threats.map(t => t.threatType),
+          } : null,
+          abuseipdb: abuseIPDBResult ? {
+            abuse_confidence: abuseIPDBResult.abuseConfidenceScore,
+            total_reports: abuseIPDBResult.totalReports,
+            isp: abuseIPDBResult.isp,
+            country: abuseIPDBResult.countryCode,
+          } : null,
+          ipinfo: ipInfoResult ? {
+            city: ipInfoResult.city,
+            region: ipInfoResult.region,
+            country: ipInfoResult.country,
+            org: ipInfoResult.org,
+          } : null,
+        },
+      })
     } catch {
-      // Fallback to rule-based analysis
-      console.log("AI unavailable, using rule-based domain analysis")
-      const fallbackResult = analyzeDomainWithRules(url)
-      return Response.json(fallbackResult)
+      // Return rule-based + external API results
+      return Response.json({
+        ...ruleAnalysis,
+        ip: resolvedIP,
+        location,
+        risk: riskLevel,
+        reputation,
+        details,
+        external_scans: {
+          virustotal: virusTotalResult ? {
+            positives: virusTotalResult.positives,
+            total: virusTotalResult.total,
+            permalink: virusTotalResult.permalink,
+          } : null,
+          google_safe_browsing: safeBrowsingResult ? {
+            is_safe: safeBrowsingResult.isSafe,
+            threats: safeBrowsingResult.threats.map(t => t.threatType),
+          } : null,
+          abuseipdb: abuseIPDBResult ? {
+            abuse_confidence: abuseIPDBResult.abuseConfidenceScore,
+            total_reports: abuseIPDBResult.totalReports,
+          } : null,
+          ipinfo: ipInfoResult,
+        },
+      })
     }
   } catch (error) {
     console.error("Track error:", error)
-    return Response.json(
-      { error: "Failed to analyze domain" },
-      { status: 500 }
-    )
+    return Response.json({ error: "Failed to analyze domain" }, { status: 500 })
   }
 }

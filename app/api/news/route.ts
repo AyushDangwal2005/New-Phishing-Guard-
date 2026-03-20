@@ -1,3 +1,5 @@
+import { fetchSecurityNews } from "@/lib/api-services"
+
 export const dynamic = "force-dynamic"
 
 interface NewsItem {
@@ -6,11 +8,11 @@ interface NewsItem {
   time: string
   url: string
   description?: string
+  image?: string
 }
 
-// Cybersecurity news from real RSS feeds simulation
-// In production, this would fetch from actual news APIs
-const CYBERSECURITY_NEWS: NewsItem[] = [
+// Fallback cybersecurity news when API is unavailable
+const FALLBACK_NEWS: NewsItem[] = [
   {
     title: "New AI-Powered Phishing Attacks Target Corporate Executives",
     source: "Security Week",
@@ -69,14 +71,57 @@ const CYBERSECURITY_NEWS: NewsItem[] = [
   },
 ]
 
+function formatTimeAgo(dateString: string): string {
+  const date = new Date(dateString)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / (1000 * 60))
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+  if (diffMins < 60) return `${diffMins} minutes ago`
+  if (diffHours < 24) return `${diffHours} hours ago`
+  if (diffDays === 1) return "1 day ago"
+  if (diffDays < 7) return `${diffDays} days ago`
+  return date.toLocaleDateString()
+}
+
 export async function GET() {
-  // Simulate network delay
-  await new Promise(resolve => setTimeout(resolve, 500))
+  try {
+    // Try to fetch from News API
+    const newsArticles = await fetchSecurityNews()
 
-  // Randomize order slightly and return fresh timestamps
-  const shuffled = [...CYBERSECURITY_NEWS]
-    .sort(() => Math.random() - 0.5)
-    .slice(0, 6)
+    if (newsArticles.length > 0) {
+      const formattedNews: NewsItem[] = newsArticles.map(article => ({
+        title: article.title,
+        source: article.source,
+        time: formatTimeAgo(article.publishedAt),
+        url: article.url,
+        description: article.description,
+        image: article.urlToImage,
+      }))
 
-  return Response.json(shuffled)
+      return Response.json({
+        articles: formattedNews.slice(0, 8),
+        source: "live",
+        lastUpdated: new Date().toISOString(),
+      })
+    }
+
+    // Fallback to static news
+    return Response.json({
+      articles: FALLBACK_NEWS.slice(0, 6),
+      source: "cached",
+      lastUpdated: new Date().toISOString(),
+    })
+  } catch (error) {
+    console.error("News fetch error:", error)
+    
+    // Return fallback news on error
+    return Response.json({
+      articles: FALLBACK_NEWS.slice(0, 6),
+      source: "cached",
+      lastUpdated: new Date().toISOString(),
+    })
+  }
 }

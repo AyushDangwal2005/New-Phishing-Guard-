@@ -14,9 +14,29 @@ import {
   Flag,
   Lightbulb,
   Target,
-  Info
+  Info,
+  Shield,
+  ExternalLink,
+  XCircle,
+  Scan,
 } from "lucide-react"
 import { toast } from "sonner"
+
+interface ExternalScans {
+  virustotal?: {
+    positives: number
+    total: number
+    permalink: string | null
+  } | null
+  google_safe_browsing?: {
+    is_safe: boolean
+    threats: string[]
+  } | null
+  huggingface?: {
+    label: string
+    confidence: number
+  } | null
+}
 
 export interface AnalysisResultData {
   risk_level: RiskLevel
@@ -26,6 +46,8 @@ export interface AnalysisResultData {
   actions: string[]
   highlighted_words: string[]
   original_text?: string
+  threat_types?: string[] | null
+  external_scans?: ExternalScans | null
 }
 
 interface AnalysisResultProps {
@@ -36,7 +58,7 @@ interface AnalysisResultProps {
 export function AnalysisResult({ result, className }: AnalysisResultProps) {
   const handleCopy = async () => {
     const text = `
-Risk Level: ${result.risk_level}
+Risk Level: ${result.risk_level.toUpperCase()}
 Risk Score: ${result.risk_score}/100
 Confidence: ${result.confidence_score}%
 
@@ -67,11 +89,14 @@ ${result.actions.map(a => `- ${a}`).join('\n')}
   }
 
   return (
-    <div className={cn("space-y-6", className)}>
+    <div className={cn("space-y-5", className)}>
       {/* Main Result Card */}
-      <Card className="glass overflow-hidden">
+      <Card className="overflow-hidden border-2" style={{
+        borderColor: result.risk_level === "safe" ? "var(--success)" : 
+                     result.risk_level === "suspicious" ? "var(--warning)" : "var(--destructive)"
+      }}>
         <div className={cn(
-          "h-1",
+          "h-1.5",
           result.risk_level === "safe" && "bg-success",
           result.risk_level === "suspicious" && "bg-warning",
           result.risk_level === "dangerous" && "bg-destructive"
@@ -80,13 +105,25 @@ ${result.actions.map(a => `- ${a}`).join('\n')}
           <div className="flex flex-col md:flex-row items-center justify-between gap-6">
             <div className="flex flex-col items-center md:items-start gap-4">
               <RiskBadge level={result.risk_level} size="lg" />
+              {result.threat_types && result.threat_types.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {result.threat_types.map((type, i) => (
+                    <span 
+                      key={i}
+                      className="px-2 py-0.5 bg-destructive/10 text-destructive text-xs font-medium rounded"
+                    >
+                      {type}
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="text-center md:text-left">
-                <p className="text-muted-foreground text-sm">
+                <p className="text-muted-foreground text-sm font-medium">
                   AI Confidence Score
                 </p>
                 <div className="flex items-center gap-2 mt-1">
                   <Progress value={result.confidence_score} className="w-32 h-2" />
-                  <span className="font-semibold">{result.confidence_score}%</span>
+                  <span className="font-bold">{result.confidence_score}%</span>
                 </div>
               </div>
             </div>
@@ -95,17 +132,122 @@ ${result.actions.map(a => `- ${a}`).join('\n')}
         </CardContent>
       </Card>
 
-      {/* Highlighted Text */}
-      {result.original_text && result.highlighted_words.length > 0 && (
-        <Card className="glass">
+      {/* External Scan Results */}
+      {result.external_scans && (
+        <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
-              <Target className="h-4 w-4 text-primary" />
-              Suspicious Content Detected
+              <Scan className="h-4 w-4 text-accent" />
+              External Security Scans
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="p-4 bg-muted/50 rounded-lg font-mono text-sm leading-relaxed">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* VirusTotal */}
+              <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded bg-background flex items-center justify-center">
+                    <Shield className="h-4 w-4 text-accent" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold">VirusTotal</div>
+                    {result.external_scans.virustotal ? (
+                      <div className={cn(
+                        "text-xs font-medium",
+                        result.external_scans.virustotal.positives > 0 ? "text-destructive" : "text-success"
+                      )}>
+                        {result.external_scans.virustotal.positives}/{result.external_scans.virustotal.total} detections
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">Not scanned</div>
+                    )}
+                  </div>
+                </div>
+                {result.external_scans.virustotal?.positives === 0 && (
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                )}
+                {result.external_scans.virustotal && result.external_scans.virustotal.positives > 0 && (
+                  <XCircle className="h-4 w-4 text-destructive" />
+                )}
+              </div>
+
+              {/* Google Safe Browsing */}
+              <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded bg-background flex items-center justify-center">
+                    <Shield className="h-4 w-4 text-accent" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold">Safe Browsing</div>
+                    {result.external_scans.google_safe_browsing ? (
+                      <div className={cn(
+                        "text-xs font-medium",
+                        result.external_scans.google_safe_browsing.is_safe ? "text-success" : "text-destructive"
+                      )}>
+                        {result.external_scans.google_safe_browsing.is_safe ? "No threats" : "Threats found"}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">Not scanned</div>
+                    )}
+                  </div>
+                </div>
+                {result.external_scans.google_safe_browsing?.is_safe && (
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                )}
+                {result.external_scans.google_safe_browsing && !result.external_scans.google_safe_browsing.is_safe && (
+                  <XCircle className="h-4 w-4 text-destructive" />
+                )}
+              </div>
+
+              {/* HuggingFace ML */}
+              <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded bg-background flex items-center justify-center">
+                    <Shield className="h-4 w-4 text-accent" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold">ML Classifier</div>
+                    {result.external_scans.huggingface ? (
+                      <div className="text-xs font-medium text-foreground">
+                        {result.external_scans.huggingface.label} ({result.external_scans.huggingface.confidence}%)
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">Not classified</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* VirusTotal Link */}
+            {result.external_scans.virustotal?.permalink && (
+              <div className="mt-3 pt-3 border-t border-border">
+                <a 
+                  href={result.external_scans.virustotal.permalink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs text-accent hover:underline"
+                >
+                  View full VirusTotal report
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Highlighted Text */}
+      {result.original_text && result.highlighted_words.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Target className="h-4 w-4 text-warning" />
+              Suspicious Content Highlighted
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="p-4 bg-muted/50 rounded-lg font-mono text-sm leading-relaxed border border-border">
               <HighlightedText 
                 text={result.original_text} 
                 highlights={result.highlighted_words} 
@@ -115,9 +257,9 @@ ${result.actions.map(a => `- ${a}`).join('\n')}
         </Card>
       )}
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-5 md:grid-cols-2">
         {/* Reasons */}
-        <Card className="glass">
+        <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-warning" />
@@ -125,11 +267,11 @@ ${result.actions.map(a => `- ${a}`).join('\n')}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="space-y-2">
+            <ul className="space-y-2.5">
               {result.reasons.map((reason, index) => (
                 <li 
                   key={index} 
-                  className="flex items-start gap-2 text-sm"
+                  className="flex items-start gap-2.5 text-sm"
                 >
                   <Info className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
                   <span>{reason}</span>
@@ -140,19 +282,19 @@ ${result.actions.map(a => `- ${a}`).join('\n')}
         </Card>
 
         {/* Actions */}
-        <Card className="glass">
+        <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
-              <Lightbulb className="h-4 w-4 text-primary" />
+              <Lightbulb className="h-4 w-4 text-accent" />
               Recommended Actions
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="space-y-2">
+            <ul className="space-y-2.5">
               {result.actions.map((action, index) => (
                 <li 
                   key={index} 
-                  className="flex items-start gap-2 text-sm"
+                  className="flex items-start gap-2.5 text-sm"
                 >
                   <CheckCircle2 className="h-4 w-4 mt-0.5 text-success shrink-0" />
                   <span>{action}</span>
@@ -173,7 +315,12 @@ ${result.actions.map(a => `- ${a}`).join('\n')}
           <Share2 className="h-4 w-4" />
           Share
         </Button>
-        <Button variant="outline" size="sm" onClick={handleReport} className="gap-2 text-destructive hover:text-destructive">
+        <Button 
+          variant="outline" 
+          size="sm" 
+          onClick={handleReport} 
+          className="gap-2 border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
+        >
           <Flag className="h-4 w-4" />
           Report Phishing
         </Button>
@@ -193,7 +340,7 @@ function HighlightedText({ text, highlights }: { text: string; highlights: strin
       {parts.map((part, index) => {
         const isHighlight = highlights.some(h => h.toLowerCase() === part.toLowerCase())
         return isHighlight ? (
-          <mark key={index} className="bg-destructive/30 text-destructive px-1 rounded font-semibold">
+          <mark key={index} className="bg-destructive/20 text-destructive px-1 rounded font-semibold border border-destructive/30">
             {part}
           </mark>
         ) : (

@@ -1,39 +1,31 @@
 import type { Metadata, Viewport } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+import { Inter, JetBrains_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from 'sonner'
 import './globals.css'
 
-const geistSans = Geist({ 
+const inter = Inter({ 
   subsets: ["latin"],
-  variable: '--font-geist-sans'
+  variable: '--font-inter'
 })
 
-const geistMono = Geist_Mono({ 
+const jetbrainsMono = JetBrains_Mono({ 
   subsets: ["latin"],
-  variable: '--font-geist-mono'
+  variable: '--font-jetbrains'
 })
 
 export const metadata: Metadata = {
   title: 'Phishing Guard AI | Intelligent Cybersecurity Protection',
   description: 'AI-powered phishing detection, scam prevention, and digital fraud protection. Analyze suspicious emails, URLs, and attachments with intelligent threat detection.',
-  keywords: ['phishing detection', 'cybersecurity', 'scam prevention', 'AI security', 'fraud protection'],
+  keywords: ['phishing detection', 'cybersecurity', 'scam prevention', 'AI security', 'fraud protection', 'email security'],
   authors: [{ name: 'Phishing Guard AI' }],
-  icons: {
-    icon: [
-      { url: '/icon-light-32x32.png', media: '(prefers-color-scheme: light)' },
-      { url: '/icon-dark-32x32.png', media: '(prefers-color-scheme: dark)' },
-      { url: '/icon.svg', type: 'image/svg+xml' },
-    ],
-    apple: '/apple-icon.png',
-  },
 }
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#f8fafc' },
-    { media: '(prefers-color-scheme: dark)', color: '#0f172a' },
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#0a0a0f' },
   ],
   width: 'device-width',
   initialScale: 1,
@@ -46,7 +38,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}>
+      <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"
@@ -54,7 +46,15 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           {children}
-          <Toaster position="bottom-right" richColors />
+          <Toaster 
+            position="bottom-right" 
+            richColors 
+            toastOptions={{
+              classNames: {
+                toast: 'glass-strong',
+              }
+            }}
+          />
         </ThemeProvider>
         <Analytics />
       </body>

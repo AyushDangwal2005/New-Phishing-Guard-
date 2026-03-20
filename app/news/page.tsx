@@ -16,12 +16,19 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+interface NewsResponse {
+  articles: NewsItem[]
+  source: "live" | "cached"
+  lastUpdated: string
+}
+
 interface NewsItem {
   title: string
   source: string
   time: string
   url: string
   description?: string
+  image?: string
 }
 
 const threatStats = [
@@ -35,15 +42,17 @@ export default function NewsPage() {
   const [news, setNews] = useState<NewsItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [newsSource, setNewsSource] = useState<"live" | "cached">("cached")
 
   const fetchNews = async () => {
     setIsLoading(true)
     try {
       const response = await fetch("/api/news")
       if (!response.ok) throw new Error("Failed to fetch news")
-      const data = await response.json()
-      setNews(data)
-      setLastUpdated(new Date())
+      const data: NewsResponse = await response.json()
+      setNews(data.articles)
+      setNewsSource(data.source)
+      setLastUpdated(new Date(data.lastUpdated))
     } catch {
       toast.error("Failed to load news")
     } finally {
@@ -111,6 +120,11 @@ export default function NewsPage() {
             Latest Security News
           </h2>
           <div className="flex items-center gap-3">
+            {newsSource === "live" && (
+              <span className="px-2 py-0.5 bg-success/10 text-success text-xs font-semibold rounded">
+                LIVE
+              </span>
+            )}
             {lastUpdated && (
               <span className="text-sm text-muted-foreground flex items-center gap-1">
                 <Clock className="h-4 w-4" />

@@ -14,19 +14,19 @@ interface RiskBadgeProps {
 
 const riskConfig = {
   safe: {
-    label: "Safe",
+    label: "SAFE",
     icon: ShieldCheck,
-    className: "bg-success/10 text-success border-success/30 glow-success",
+    className: "bg-success/15 text-success border-success/40",
   },
   suspicious: {
-    label: "Suspicious",
+    label: "SUSPICIOUS",
     icon: ShieldAlert,
-    className: "bg-warning/10 text-warning border-warning/30 glow-warning",
+    className: "bg-warning/15 text-warning border-warning/40",
   },
   dangerous: {
-    label: "Dangerous",
+    label: "DANGEROUS",
     icon: ShieldX,
-    className: "bg-destructive/10 text-destructive border-destructive/30 glow-destructive",
+    className: "bg-destructive/15 text-destructive border-destructive/40",
   },
 }
 

@@ -23,8 +23,34 @@ import {
   Clock,
   Building,
   Info,
+  Scan,
+  Activity,
 } from "lucide-react"
 import { toast } from "sonner"
+
+interface ExternalScans {
+  virustotal?: {
+    positives: number
+    total: number
+    permalink: string | null
+  } | null
+  google_safe_browsing?: {
+    is_safe: boolean
+    threats: string[]
+  } | null
+  abuseipdb?: {
+    abuse_confidence: number
+    total_reports: number
+    isp?: string
+    country?: string
+  } | null
+  ipinfo?: {
+    city: string
+    region: string
+    country: string
+    org: string
+  } | null
+}
 
 interface TrackResult {
   domain: string
@@ -36,6 +62,7 @@ interface TrackResult {
   risk: "Low" | "Medium" | "High"
   registrar: string | null
   details: string[]
+  external_scans?: ExternalScans
 }
 
 const riskColors = {
@@ -87,7 +114,7 @@ export default function TrackerPage() {
       setResult(data)
       
       if (data.risk === "High") {
-        toast.error("High-risk domain detected!", {
+        toast.error("ALERT: High-risk domain detected!", {
           description: "Exercise extreme caution with this website.",
         })
       } else if (data.risk === "Medium") {
@@ -116,33 +143,35 @@ export default function TrackerPage() {
 
       <main className="container mx-auto px-4 py-8 max-w-5xl">
         {/* Header */}
-        <div className="text-center mb-12">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-accent/10 border border-accent/20 text-accent text-sm font-semibold mb-6">
             <Globe className="h-4 w-4" />
             Domain Intelligence
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">
-            URL <span className="gradient-text">Tracker</span>
+          <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 text-balance">
+            Check Any URL
+            <br />
+            <span className="text-accent">Before You Click</span>
           </h1>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Analyze any URL or domain for security threats, reputation scores, 
-            and potential phishing indicators.
+          <p className="text-lg text-muted-foreground max-w-2xl mx-auto text-pretty">
+            Get comprehensive domain intelligence: reputation scores, 
+            IP geolocation, SSL verification, and threat analysis.
           </p>
         </div>
 
         {/* Search Form */}
-        <Card className="glass mb-8">
+        <Card className="mb-8 border-2">
           <CardContent className="pt-6">
             <div className="flex gap-3">
               <div className="relative flex-1">
                 <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                 <Input
                   type="url"
-                  placeholder="Enter URL or domain to analyze (e.g., example.com)"
+                  placeholder="Enter URL or domain (e.g., suspicious-site.xyz)"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleTrack()}
-                  className="pl-11 h-12 text-base bg-background/50"
+                  className="pl-11 h-12 text-base"
                   disabled={isLoading}
                 />
               </div>
@@ -150,14 +179,14 @@ export default function TrackerPage() {
                 onClick={handleTrack} 
                 disabled={isLoading || !url.trim()}
                 size="lg"
-                className="gap-2 px-6"
+                className="gap-2 px-6 bg-accent hover:bg-accent/90 text-accent-foreground font-semibold"
               >
                 {isLoading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Search className="h-4 w-4" />
                 )}
-                Track
+                Track URL
               </Button>
             </div>
           </CardContent>
@@ -165,46 +194,49 @@ export default function TrackerPage() {
 
         {/* Results */}
         {result && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Risk Overview */}
-            <div className="grid gap-6 md:grid-cols-2">
-              <Card className="glass">
+            <div className="grid gap-5 md:grid-cols-2">
+              <Card className="border-2" style={{
+                borderColor: result.risk === "Low" ? "var(--success)" : 
+                             result.risk === "Medium" ? "var(--warning)" : "var(--destructive)"
+              }}>
                 <CardContent className="pt-6">
                   <div className="flex flex-col items-center">
                     <RiskMeter score={riskScores[result.risk]} />
                     <div className={cn(
-                      "mt-4 px-4 py-2 rounded-full text-sm font-medium",
+                      "mt-4 px-4 py-1.5 rounded-full text-sm font-bold uppercase tracking-wide",
                       result.risk === "Low" && "bg-success/10 text-success",
                       result.risk === "Medium" && "bg-warning/10 text-warning",
                       result.risk === "High" && "bg-destructive/10 text-destructive"
                     )}>
-                      {result.risk} Risk Level
+                      {result.risk} Risk
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              <Card className="glass">
+              <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base flex items-center gap-2">
-                    <Info className="h-4 w-4 text-primary" />
+                    <Info className="h-4 w-4 text-accent" />
                     Domain Summary
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between p-3 bg-background/50 rounded-lg">
-                    <div className="flex items-center gap-2 text-muted-foreground">
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                    <div className="flex items-center gap-2 text-muted-foreground text-sm">
                       <Globe className="h-4 w-4" />
                       <span>Domain</span>
                     </div>
-                    <span className="font-medium">{result.domain}</span>
+                    <span className="font-semibold">{result.domain}</span>
                   </div>
-                  <div className="flex items-center justify-between p-3 bg-background/50 rounded-lg">
-                    <div className="flex items-center gap-2 text-muted-foreground">
+                  <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                    <div className="flex items-center gap-2 text-muted-foreground text-sm">
                       <Shield className="h-4 w-4" />
                       <span>Reputation</span>
                     </div>
-                    <span className={cn("font-medium", riskColors[result.risk])}>
+                    <span className={cn("font-semibold", riskColors[result.risk])}>
                       {result.reputation}
                     </span>
                   </div>
@@ -212,59 +244,172 @@ export default function TrackerPage() {
               </Card>
             </div>
 
+            {/* External Scan Results */}
+            {result.external_scans && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Scan className="h-4 w-4 text-accent" />
+                    External Security Scans
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {/* VirusTotal */}
+                    <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded bg-background flex items-center justify-center">
+                          <Shield className="h-4 w-4 text-accent" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold">VirusTotal</div>
+                          {result.external_scans.virustotal ? (
+                            <div className={cn(
+                              "text-xs font-medium",
+                              result.external_scans.virustotal.positives > 0 ? "text-destructive" : "text-success"
+                            )}>
+                              {result.external_scans.virustotal.positives}/{result.external_scans.virustotal.total}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-muted-foreground">Not scanned</div>
+                          )}
+                        </div>
+                      </div>
+                      {result.external_scans.virustotal?.positives === 0 && (
+                        <CheckCircle2 className="h-4 w-4 text-success" />
+                      )}
+                      {result.external_scans.virustotal && result.external_scans.virustotal.positives > 0 && (
+                        <XCircle className="h-4 w-4 text-destructive" />
+                      )}
+                    </div>
+
+                    {/* Safe Browsing */}
+                    <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded bg-background flex items-center justify-center">
+                          <Shield className="h-4 w-4 text-accent" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold">Safe Browsing</div>
+                          {result.external_scans.google_safe_browsing ? (
+                            <div className={cn(
+                              "text-xs font-medium",
+                              result.external_scans.google_safe_browsing.is_safe ? "text-success" : "text-destructive"
+                            )}>
+                              {result.external_scans.google_safe_browsing.is_safe ? "Clear" : "Threats"}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-muted-foreground">Not scanned</div>
+                          )}
+                        </div>
+                      </div>
+                      {result.external_scans.google_safe_browsing?.is_safe && (
+                        <CheckCircle2 className="h-4 w-4 text-success" />
+                      )}
+                    </div>
+
+                    {/* AbuseIPDB */}
+                    <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded bg-background flex items-center justify-center">
+                          <Activity className="h-4 w-4 text-accent" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold">AbuseIPDB</div>
+                          {result.external_scans.abuseipdb ? (
+                            <div className={cn(
+                              "text-xs font-medium",
+                              result.external_scans.abuseipdb.abuse_confidence > 50 ? "text-destructive" :
+                              result.external_scans.abuseipdb.abuse_confidence > 20 ? "text-warning" : "text-success"
+                            )}>
+                              {result.external_scans.abuseipdb.abuse_confidence}% abuse
+                            </div>
+                          ) : (
+                            <div className="text-xs text-muted-foreground">Not checked</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* IPInfo */}
+                    <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded bg-background flex items-center justify-center">
+                          <MapPin className="h-4 w-4 text-accent" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold">IPInfo</div>
+                          {result.external_scans.ipinfo ? (
+                            <div className="text-xs text-muted-foreground">
+                              {result.external_scans.ipinfo.country}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-muted-foreground">Not resolved</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Domain Details Grid */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              <Card className="glass">
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+              <Card>
                 <CardContent className="pt-6">
                   <div className="flex items-center gap-3">
-                    <div className="p-3 rounded-lg bg-primary/10">
-                      <Calendar className="h-5 w-5 text-primary" />
+                    <div className="p-2.5 rounded-lg bg-accent/10">
+                      <Calendar className="h-5 w-5 text-accent" />
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Domain Age</p>
-                      <p className="font-semibold">{result.age}</p>
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Domain Age</p>
+                      <p className="font-bold">{result.age}</p>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              <Card className="glass">
+              <Card>
                 <CardContent className="pt-6">
                   <div className="flex items-center gap-3">
-                    <div className="p-3 rounded-lg bg-primary/10">
-                      <Server className="h-5 w-5 text-primary" />
+                    <div className="p-2.5 rounded-lg bg-accent/10">
+                      <Server className="h-5 w-5 text-accent" />
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">IP Address</p>
-                      <p className="font-semibold">{result.ip || "Not available"}</p>
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">IP Address</p>
+                      <p className="font-bold font-mono text-sm">{result.ip || "Not available"}</p>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              <Card className="glass">
+              <Card>
                 <CardContent className="pt-6">
                   <div className="flex items-center gap-3">
-                    <div className="p-3 rounded-lg bg-primary/10">
-                      <MapPin className="h-5 w-5 text-primary" />
+                    <div className="p-2.5 rounded-lg bg-accent/10">
+                      <MapPin className="h-5 w-5 text-accent" />
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Location</p>
-                      <p className="font-semibold">{result.location || "Unknown"}</p>
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Location</p>
+                      <p className="font-bold">{result.location || "Unknown"}</p>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              <Card className="glass">
+              <Card>
                 <CardContent className="pt-6">
                   <div className="flex items-center gap-3">
-                    <div className={cn("p-3 rounded-lg", `${sslColors[result.ssl]}/10`.replace("text-", "bg-"))}>
+                    <div className={cn("p-2.5 rounded-lg", 
+                      result.ssl === "Valid" ? "bg-success/10" :
+                      result.ssl === "Invalid" ? "bg-destructive/10" : "bg-warning/10"
+                    )}>
                       <Lock className={cn("h-5 w-5", sslColors[result.ssl])} />
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">SSL Certificate</p>
-                      <p className={cn("font-semibold flex items-center gap-1", sslColors[result.ssl])}>
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">SSL Certificate</p>
+                      <p className={cn("font-bold flex items-center gap-1", sslColors[result.ssl])}>
                         <SslIcon className="h-4 w-4" />
                         {result.ssl}
                       </p>
@@ -273,29 +418,29 @@ export default function TrackerPage() {
                 </CardContent>
               </Card>
 
-              <Card className="glass">
+              <Card>
                 <CardContent className="pt-6">
                   <div className="flex items-center gap-3">
-                    <div className="p-3 rounded-lg bg-primary/10">
-                      <Building className="h-5 w-5 text-primary" />
+                    <div className="p-2.5 rounded-lg bg-accent/10">
+                      <Building className="h-5 w-5 text-accent" />
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Registrar</p>
-                      <p className="font-semibold">{result.registrar || "Unknown"}</p>
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Registrar</p>
+                      <p className="font-bold">{result.registrar || "Unknown"}</p>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              <Card className="glass">
+              <Card>
                 <CardContent className="pt-6">
                   <div className="flex items-center gap-3">
-                    <div className="p-3 rounded-lg bg-primary/10">
-                      <Clock className="h-5 w-5 text-primary" />
+                    <div className="p-2.5 rounded-lg bg-accent/10">
+                      <Clock className="h-5 w-5 text-accent" />
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Last Checked</p>
-                      <p className="font-semibold">Just now</p>
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Last Checked</p>
+                      <p className="font-bold">Just now</p>
                     </div>
                   </div>
                 </CardContent>
@@ -303,19 +448,19 @@ export default function TrackerPage() {
             </div>
 
             {/* Analysis Details */}
-            <Card className="glass">
-              <CardHeader>
+            <Card>
+              <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 text-warning" />
                   Analysis Details
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ul className="space-y-3">
+                <ul className="space-y-2.5">
                   {result.details.map((detail, index) => (
                     <li key={index} className="flex items-start gap-3 text-sm">
                       <div className={cn(
-                        "mt-1 h-2 w-2 rounded-full shrink-0",
+                        "mt-1.5 h-2 w-2 rounded-full shrink-0",
                         result.risk === "Low" ? "bg-success" :
                         result.risk === "High" ? "bg-destructive" : "bg-warning"
                       )} />
@@ -335,7 +480,7 @@ export default function TrackerPage() {
                   rel="noopener noreferrer"
                 >
                   <ExternalLink className="h-4 w-4" />
-                  Check on VirusTotal
+                  VirusTotal
                 </a>
               </Button>
               <Button variant="outline" size="sm" className="gap-2" asChild>
@@ -358,6 +503,16 @@ export default function TrackerPage() {
                   Google Safe Browsing
                 </a>
               </Button>
+              <Button variant="outline" size="sm" className="gap-2" asChild>
+                <a 
+                  href={`https://www.abuseipdb.com/check/${result.ip || result.domain}`} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  AbuseIPDB
+                </a>
+              </Button>
             </div>
           </div>
         )}
@@ -365,11 +520,13 @@ export default function TrackerPage() {
         {/* Empty State */}
         {!result && !isLoading && (
           <div className="text-center py-16">
-            <Globe className="h-16 w-16 mx-auto text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-medium mb-2">Enter a URL to analyze</h3>
+            <div className="w-20 h-20 mx-auto rounded-2xl bg-muted/50 flex items-center justify-center mb-6">
+              <Globe className="h-10 w-10 text-muted-foreground/50" />
+            </div>
+            <h3 className="text-lg font-bold mb-2">Enter a URL to analyze</h3>
             <p className="text-muted-foreground text-sm max-w-md mx-auto">
               Get detailed domain intelligence including age, reputation, 
-              SSL status, and security risk assessment.
+              SSL status, IP geolocation, and security risk assessment.
             </p>
           </div>
         )}
